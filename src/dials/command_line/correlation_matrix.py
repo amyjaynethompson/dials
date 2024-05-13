@@ -10,6 +10,8 @@ from jinja2 import ChoiceLoader, Environment, PackageLoader
 import iotbx.phil
 
 from dials.algorithms.correlation.analysis import CorrelationMatrix
+from dials.algorithms.correlation.plots import linkage_matrix_to_dict
+from dials.algorithms.correlation.significance import ClusterSignificance
 from dials.array_family import flex
 from dials.util import log, show_mail_handle_errors
 from dials.util.multi_dataset_handling import (
@@ -27,6 +29,10 @@ include scope dials.algorithms.correlation.analysis.phil_scope
 
 seed = 42
   .type = int(value_min=0)
+
+significance = False
+  .type = bool
+  .help = "Set to true to calculate significance of clusters"
 
 output {
   log = dials.correlation_matrix.log
@@ -116,6 +122,12 @@ def run(args=None):
         sys.exit(e)
 
     matrices.calculate_matrices()
+
+    if params.significance:
+        ClusterSignificance(
+            matrices.unmerged_datasets,
+            linkage_matrix_to_dict(matrices.cc_linkage_matrix),
+        )
 
     if params.output.json:
         matrices.output_json()
