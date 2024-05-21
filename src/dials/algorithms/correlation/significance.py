@@ -26,67 +26,30 @@ class ClusterSignificance:
         self.linkage = linkage_dict
         self.cluster_significance = {}
         self.unmerged_datasets = unmerged_datasets
-        clusters = []
+        self.clusters = []
         for cluster in self.linkage:
-            clusters.append([i - 1 for i in self.linkage[cluster]["datasets"]])
+            self.clusters.append([i - 1 for i in self.linkage[cluster]["datasets"]])
         self.completed_clusters = {}
-        for ids in clusters:
-            is_mixed = self.expected_significance(ids)
+        for ids in self.clusters:
             new_data, sub_clusters = self.id_sub_clusters(ids)
             if len(new_data) == 1:
                 array_1 = self._merge_intensities(
-                    [self.unmerged_datasets[new_data[0]].deep_copy()]
+                    [self.unmerged_datasets[new_data[0]]]
                 )[0]
-                array_2 = self.completed_clusters[tuple(sub_clusters[0])].deep_copy()
+                array_2 = self.completed_clusters[tuple(sub_clusters[0])]
             elif len(new_data) == 0 and len(sub_clusters) == 1:
-                array_1 = self._merge_intensities(
-                    [self.unmerged_datasets[ids[0]].deep_copy()]
-                )[0]
-                array_2 = self._merge_intensities(
-                    [self.unmerged_datasets[ids[1]].deep_copy()]
-                )[0]
+                array_1 = self._merge_intensities([self.unmerged_datasets[ids[0]]])[0]
+                array_2 = self._merge_intensities([self.unmerged_datasets[ids[1]]])[0]
             elif len(sub_clusters) == 2:
-                array_1 = self.completed_clusters[tuple(sub_clusters[0])].deep_copy()
-                array_2 = self.completed_clusters[tuple(sub_clusters[1])].deep_copy()
+                array_1 = self.completed_clusters[tuple(sub_clusters[0])]
+                array_2 = self.completed_clusters[tuple(sub_clusters[1])]
             significance, pval, q, dof = self.calculate_significance(array_1, array_2)
             merged_cluster = self.merge_cluster(ids)
             self.completed_clusters[tuple(ids)] = merged_cluster
             self.cluster_significance[tuple(ids)] = [significance, pval, q, dof]
-            if significance != is_mixed:
-                print("Stats don't agree for cluster:")
-                print(tuple(ids))
-                print(self.cluster_significance[tuple(ids)])
-                print(
-                    f"From data ids this cluster is a mix of cows and people: {is_mixed}"
-                )
-        # print(self.cluster_significance)
-
-    def expected_significance(self, ids):
-        cows = list(range(0, 34))
-        cows += list(range(82, 150))
-        man = list(range(34, 82))
-        man += list(range(150, 169))
-
-        status = None
-        for i in ids:
-            if not status:
-                if i in cows:
-                    status = "cows"
-                elif i in man:
-                    status = "man"
-            elif status == "cows":
-                if i in man:
-                    status = "mixed"
-            elif status == "man":
-                if i in cows:
-                    status = "mixed"
-
-        if status == "mixed":
-            is_mixed = True
-        else:
-            is_mixed = False
-
-        return is_mixed
+        self.significant_clusters = self.determine_significant_clusters()
+        for i in self.significant_clusters:
+            print(i)
 
     def id_sub_clusters(self, ids):
         if len(ids) > 2:
@@ -123,12 +86,14 @@ class ClusterSignificance:
         return new_dataset, final_sub_clusters
 
     def calculate_significance(self, arr1, arr2):
-        # try:
+        # unsure if need, but not always there so doing just in case for now
+        arr1.is_xray_intensity_array()
+        arr2.is_xray_intensity_array()
+
+        # Do need this
+        arr1 = arr1.customized_copy(crystal_symmetry=arr2.crystal_symmetry())
+
         int1, int2 = arr1.common_sets(arr2)
-        # except:
-        # print(arr1.crystal_symmetry())
-        # print(arr2.crystal_symmetry())
-        int1, int2 = arr1.common_sets(arr2, assert_is_similar_symmetry=False)
 
         difference = int1.data() - int2.data()
         difference_sigmas = (int1.sigmas() ** (2) + int2.sigmas() ** (2)) ** 1 / 2
@@ -151,18 +116,11 @@ class ClusterSignificance:
         for i in ids:
             if not cluster:
                 cluster = self.unmerged_datasets[i].deep_copy()
-                cluster.set_info(self.unmerged_datasets[i])
             else:
-                # try:
-                cluster = cluster.concatenate(self.unmerged_datasets[i].deep_copy())
-                # except:
-                # print(i)
-                # print(cluster.crystal_symmetry())
-                # print(self.unmerged_datasets[i].deep_copy().crystal_symmetry())
-                cluster = cluster.concatenate(
-                    self.unmerged_datasets[i].deep_copy(),
-                    assert_is_similar_symmetry=False,
+                data = self.unmerged_datasets[i].customized_copy(
+                    crystal_symmetry=cluster.crystal_symmetry()
                 )
+                cluster = cluster.concatenate(data)
 
         merged_cluster = self._merge_intensities([cluster])
 
@@ -188,3 +146,53 @@ class ClusterSignificance:
         ]
 
         return datasets_sys_absent_eliminated
+
+    def determine_significant_clusters(self):
+        significant_clusters = []
+        temp = []
+        used_datasets = []
+        for i in self.cluster_significance:
+            # THIS THING NEED TO ITERATE THROUGH AND SEE AS GO UP DENDROGRAM WHERE CLUSTER BECOMES SIGNIFICANTLY DIFFERENT, AND THEN NO LONGER CONSIDER THOSE DATASETS!!!
+            if self.cluster_significance[i][0]:
+                cluster_1 = []
+                cluster_2 = []
+                import itertools
+
+                combinations = list(itertools.combinations(self.clusters, 2))
+                for j in combinations:
+                    if sorted(j[0] + j[1]) == list(i):
+                        cluster_1 = j[0]
+                        cluster_2 = j[1]
+                if len(cluster_1) == 0:
+                    # need this incase staircase and only one dataset is added
+                    for k in self.clusters:
+                        intersection = set(i).intersection(set(k))
+                        target_length = len(i) - 1
+                        if len(intersection) == target_length:
+                            cluster_1 = sorted(intersection)
+                            cluster_2 = [p for p in i if p not in cluster_1]
+                if len(cluster_1) == 0:
+                    # This happens if the overall cluster has length of 2 - ie no sub clusters
+                    cluster_1 = [i[0]]
+                    cluster_2 = [i[1]]
+                temp.append([cluster_1, cluster_2])
+        for pair in temp:
+            # This makes sure that if larger clusters are made from smaller clusters does not output as significant (take this out later if want)
+            c1 = pair[0]
+            c2 = pair[1]
+            keep_c1 = True
+            keep_c2 = True
+            for d1 in c1:
+                if d1 in used_datasets:
+                    keep_c1 = False
+            for d2 in c2:
+                if d2 in used_datasets:
+                    keep_c2 = False
+            if keep_c1 and len(c1) > 1:
+                used_datasets = used_datasets + c1
+                significant_clusters.append(c1)
+            if keep_c2 and len(c2) > 1:
+                used_datasets = used_datasets + c2
+                significant_clusters.append(c2)
+
+        return significant_clusters
