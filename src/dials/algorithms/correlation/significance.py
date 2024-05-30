@@ -1,89 +1,113 @@
 from __future__ import annotations
 
-# import copy
 import logging
 
-# import math
-import sys
-
+from scipy.cluster import hierarchy
 from scipy.stats.distributions import chi2
 
-# from collections import OrderedDict
+from dxtbx.model import ExperimentList
 
-
-# from scitbx.array_family import flex
-
-# from dials.util.multi_dataset_handling import (
-# assign_unique_identifiers,
-# parse_multiple_datasets,
-# )
+from dials.algorithms.correlation.plots import linkage_matrix_to_dict
+from dials.algorithms.scaling.algorithm import ScalingAlgorithm
+from dials.util.filter_reflections import filtered_arrays_from_experiments_reflections
 
 logger = logging.getLogger("dials.algorithms.correlation.analysis")
 
 
+class HelpfulCluster(hierarchy.ClusterNode):
+    def __init__(self, original_node, datasets):
+        self.id = original_node.id
+        self.left = original_node.left
+        self.right = original_node.right
+        self.count = original_node.count
+        self.dist = original_node.dist
+        self.data_ids = datasets
+        self.merged_array = None
+        self.significance = False
+        self.pval = 0
+        self.dof = 0
+        self.q = 0
+        self.key_cluster = False
+        self.is_reference = False
+
+
 class ClusterSignificance:
-    def __init__(self, unmerged_datasets, linkage_dict):
+    def __init__(
+        self, unmerged_datasets, linkage_dict, experiments, reflections, params
+    ):
         self.linkage = linkage_dict
-        self.cluster_significance = {}
-        self.unmerged_datasets = unmerged_datasets
-        self.clusters = []
-        for cluster in self.linkage:
-            self.clusters.append([i - 1 for i in self.linkage[cluster]["datasets"]])
-        self.completed_clusters = {}
-        for ids in self.clusters:
-            new_data, sub_clusters = self.id_sub_clusters(ids)
-            if len(new_data) == 1:
-                array_1 = self._merge_intensities(
-                    [self.unmerged_datasets[new_data[0]]]
-                )[0]
-                array_2 = self.completed_clusters[tuple(sub_clusters[0])]
-            elif len(new_data) == 0 and len(sub_clusters) == 1:
-                array_1 = self._merge_intensities([self.unmerged_datasets[ids[0]]])[0]
-                array_2 = self._merge_intensities([self.unmerged_datasets[ids[1]]])[0]
-            elif len(sub_clusters) == 2:
-                array_1 = self.completed_clusters[tuple(sub_clusters[0])]
-                array_2 = self.completed_clusters[tuple(sub_clusters[1])]
-            significance, pval, q, dof = self.calculate_significance(array_1, array_2)
-            merged_cluster = self.merge_cluster(ids)
-            self.completed_clusters[tuple(ids)] = merged_cluster
-            self.cluster_significance[tuple(ids)] = [significance, pval, q, dof]
-        self.significant_clusters = self.determine_significant_clusters()
-        for i in self.significant_clusters:
-            print(i)
+        self.experiments = experiments
+        self.reflections = reflections
+        self.params = params
+        min_datasets_per_key_cluster = 2  # keep this at at-least 1 to be sensible
 
-    def id_sub_clusters(self, ids):
-        if len(ids) > 2:
-            sub_clusters = []
-            final_sub_clusters = []
-            new_dataset = []
-            for i in self.completed_clusters.keys():
-                if len([j for j in ids if j not in i]) == 1:
-                    new_dataset = [j for j in ids if j not in i]
-                if len([j for j in ids if j in i]) > 0:
-                    sub_clusters.append([j for j in ids if j in i])
-
-            if len(new_dataset) == 1:
-                for k in sub_clusters:
-                    joined = sorted(k + new_dataset)
-                    if joined == ids:
-                        final_sub_clusters.append(k)
+        linkage_with_datasets = linkage_matrix_to_dict(self.linkage)
+        clusters = hierarchy.to_tree(self.linkage, rd=True)
+        self.nice_clusters = []
+        for i in clusters[1]:
+            if not i.is_leaf():
+                for j in linkage_with_datasets:
+                    if linkage_with_datasets[j]["height"] == i.dist:
+                        data = [i - 1 for i in linkage_with_datasets[j]["datasets"]]
             else:
-                for m in sub_clusters:
-                    for n in sub_clusters:
-                        joined = sorted(m + n)
-                        if joined == ids:
-                            final_sub_clusters.append(m)
-                            final_sub_clusters.append(n)
-                final_sub_clusters = final_sub_clusters[0:2]
+                data = [i.id]
 
-            if len(final_sub_clusters) == 0:
-                logger.info("something has gone wrong with identifying sub clusters...")
-                sys.exit()
-        else:
-            new_dataset = []
-            final_sub_clusters = [[]]
+            new = HelpfulCluster(i, data)
 
-        return new_dataset, final_sub_clusters
+            if not i.is_leaf():
+                for k in self.nice_clusters:
+                    if k.id == i.left.id:
+                        new.left = k
+                    if k.id == i.right.id:
+                        new.right = k
+
+            self.nice_clusters.append(new)
+
+        # reorder clusters in the list because not always in a smart order
+
+        self.nice_clusters.sort(key=lambda x: len(x.data_ids), reverse=False)
+
+        self.unmerged_datasets = unmerged_datasets
+
+        for cluster in self.nice_clusters:
+            if cluster.is_leaf():
+                cluster.merged_array = self._merge_intensities(
+                    [self.unmerged_datasets[cluster.id]]
+                )[0]
+
+            else:
+                if cluster.left.significance and cluster.right.significance:
+                    cluster.significance = True
+
+                elif cluster.left.significance and not cluster.right.significance:
+                    cluster.significance = True
+                    if len(cluster.right.data_ids) >= min_datasets_per_key_cluster:
+                        cluster.right.key_cluster = True
+
+                elif cluster.right.significance and not cluster.left.significance:
+                    cluster.significance = True
+                    if len(cluster.left.data_ids) >= min_datasets_per_key_cluster:
+                        cluster.left.key_cluster = True
+
+                else:
+                    array_1, array_2 = self.scale_and_merge_clusters(
+                        cluster.left.data_ids, cluster.right.data_ids
+                    )
+                    (
+                        cluster.significance,
+                        cluster.pval,
+                        cluster.q,
+                        cluster.dof,
+                    ) = self.calculate_significance(array_1, array_2)
+                    if cluster.significance:
+                        if len(cluster.left.data_ids) >= min_datasets_per_key_cluster:
+                            cluster.left.key_cluster = True
+                        if len(cluster.right.data_ids) >= min_datasets_per_key_cluster:
+                            cluster.right.key_cluster = True
+
+        for cluster in self.nice_clusters:
+            if cluster.key_cluster:
+                print(cluster.data_ids)
 
     def calculate_significance(self, arr1, arr2):
         # unsure if need, but not always there so doing just in case for now
@@ -104,27 +128,82 @@ class ClusterSignificance:
             z2 = z**2
             q += z2
         p_value = chi2.sf(q, dof)
-        significance = 0.05
+        significance = 0.05  # 0.000001
         if p_value < significance:
             significant_cluster = True
         else:
             significant_cluster = False
         return significant_cluster, p_value, q, dof
 
-    def merge_cluster(self, ids):
-        cluster = None
-        for i in ids:
-            if not cluster:
-                cluster = self.unmerged_datasets[i].deep_copy()
+    def scale_and_merge_clusters(self, ids1, ids2):
+
+        temp_experiments = []
+        temp_reflections = []
+        idx1 = []
+        idx2 = []
+        for idx, i in enumerate(ids1):
+            temp_experiments.append(self.experiments[i])
+            temp_reflections.append(self.reflections[i])
+            idx1.append(idx)
+
+        for idx, i in enumerate(ids2):
+            temp_experiments.append(self.experiments[i])
+            temp_reflections.append(self.reflections[i])
+            idx2.append(idx)
+
+        idx2 = [i + len(idx1) for i in idx2]
+
+        temp_experiments = ExperimentList(temp_experiments)
+
+        self.params.weighting.error_model.error_model_group = [idx1, idx2]
+        self.params.weighting.error_model.grouping = "grouped"
+        self.params.scaling_options.full_matrix = False
+
+        scale = ScalingAlgorithm(self.params, temp_experiments, temp_reflections)
+        scale.run()
+
+        """
+        ######### Put these lines back in and delete above stuff to compare against not individual scaled behaviour
+        temp_experiments = self.experiments
+        temp_reflections = self.reflections
+        idx1 = ids1
+        idx2 = ids2
+        #########
+        """
+
+        datasets = filtered_arrays_from_experiments_reflections(
+            temp_experiments,
+            temp_reflections,
+            outlier_rejection_after_filter=False,
+            partiality_threshold=self.params.partiality_threshold,
+        )
+
+        array_1 = None
+        array_2 = None
+
+        for i in idx1:
+            if not array_1:
+                array_1 = datasets[i].deep_copy()
             else:
-                data = self.unmerged_datasets[i].customized_copy(
-                    crystal_symmetry=cluster.crystal_symmetry()
+                data = datasets[i].customized_copy(
+                    crystal_symmetry=array_1.crystal_symmetry()
                 )
-                cluster = cluster.concatenate(data)
+                array_1 = array_1.concatenate(data)
 
-        merged_cluster = self._merge_intensities([cluster])
+        merged_array_1 = self._merge_intensities([array_1])
 
-        return merged_cluster[0]
+        for i in idx2:
+            if not array_2:
+                array_2 = datasets[i].deep_copy()
+            else:
+                data = datasets[i].customized_copy(
+                    crystal_symmetry=array_2.crystal_symmetry()
+                )
+                array_2 = array_2.concatenate(data)
+
+        merged_array_2 = self._merge_intensities([array_2])
+
+        return merged_array_1[0], merged_array_2[0]
 
     def _merge_intensities(self, datasets: list) -> list:
         """
@@ -146,53 +225,3 @@ class ClusterSignificance:
         ]
 
         return datasets_sys_absent_eliminated
-
-    def determine_significant_clusters(self):
-        significant_clusters = []
-        temp = []
-        used_datasets = []
-        for i in self.cluster_significance:
-            # THIS THING NEED TO ITERATE THROUGH AND SEE AS GO UP DENDROGRAM WHERE CLUSTER BECOMES SIGNIFICANTLY DIFFERENT, AND THEN NO LONGER CONSIDER THOSE DATASETS!!!
-            if self.cluster_significance[i][0]:
-                cluster_1 = []
-                cluster_2 = []
-                import itertools
-
-                combinations = list(itertools.combinations(self.clusters, 2))
-                for j in combinations:
-                    if sorted(j[0] + j[1]) == list(i):
-                        cluster_1 = j[0]
-                        cluster_2 = j[1]
-                if len(cluster_1) == 0:
-                    # need this incase staircase and only one dataset is added
-                    for k in self.clusters:
-                        intersection = set(i).intersection(set(k))
-                        target_length = len(i) - 1
-                        if len(intersection) == target_length:
-                            cluster_1 = sorted(intersection)
-                            cluster_2 = [p for p in i if p not in cluster_1]
-                if len(cluster_1) == 0:
-                    # This happens if the overall cluster has length of 2 - ie no sub clusters
-                    cluster_1 = [i[0]]
-                    cluster_2 = [i[1]]
-                temp.append([cluster_1, cluster_2])
-        for pair in temp:
-            # This makes sure that if larger clusters are made from smaller clusters does not output as significant (take this out later if want)
-            c1 = pair[0]
-            c2 = pair[1]
-            keep_c1 = True
-            keep_c2 = True
-            for d1 in c1:
-                if d1 in used_datasets:
-                    keep_c1 = False
-            for d2 in c2:
-                if d2 in used_datasets:
-                    keep_c2 = False
-            if keep_c1 and len(c1) > 1:
-                used_datasets = used_datasets + c1
-                significant_clusters.append(c1)
-            if keep_c2 and len(c2) > 1:
-                used_datasets = used_datasets + c2
-                significant_clusters.append(c2)
-
-        return significant_clusters

@@ -10,7 +10,6 @@ from jinja2 import ChoiceLoader, Environment, PackageLoader
 import iotbx.phil
 
 from dials.algorithms.correlation.analysis import CorrelationMatrix
-from dials.algorithms.correlation.plots import linkage_matrix_to_dict
 from dials.algorithms.correlation.significance import ClusterSignificance
 from dials.array_family import flex
 from dials.util import log, show_mail_handle_errors
@@ -26,6 +25,8 @@ logger = logging.getLogger("dials.algorithms.correlation.analysis")
 phil_scope = iotbx.phil.parse(
     """\
 include scope dials.algorithms.correlation.analysis.phil_scope
+include scope dials.algorithms.scaling.error_model.error_model.phil_scope
+include scope dials.command_line.scale.phil_scope
 
 seed = 42
   .type = int(value_min=0)
@@ -126,7 +127,10 @@ def run(args=None):
     if params.significance:
         ClusterSignificance(
             matrices.unmerged_datasets,
-            linkage_matrix_to_dict(matrices.cc_linkage_matrix),
+            matrices.cc_linkage_matrix,
+            experiments,
+            reflections,
+            params,
         )
 
     if params.output.json:
