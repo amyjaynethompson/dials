@@ -107,7 +107,21 @@ class ClusterSignificance:
 
         for cluster in self.nice_clusters:
             if cluster.key_cluster:
+                print("Key Cluster")
                 print(cluster.data_ids)
+                print("q-score")
+                print(cluster.q)
+                print("----")
+            if cluster.significance and not cluster.key_cluster and cluster.q > 0:
+                print("Significant Difference Detected!")
+                print(cluster.data_ids)
+                print("sub cluster 1")
+                print(cluster.left.data_ids)
+                print("sub cluster 2")
+                print(cluster.right.data_ids)
+                print("q-score")
+                print(cluster.q)
+                print("----")
 
     def calculate_significance(self, arr1, arr2):
         # unsure if need, but not always there so doing just in case for now
