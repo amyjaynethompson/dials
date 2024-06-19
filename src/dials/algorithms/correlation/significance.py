@@ -239,3 +239,26 @@ class ClusterSignificance:
         ]
 
         return datasets_sys_absent_eliminated
+
+
+"""
+TEMP
+From error_model_target.py - testing but probably wrong
+class ErrorModelTargetA(ErrorModelTarget):
+
+
+    def calculate_residuals(self, apm):
+        x = apm.x
+        R = flex.pow2(
+            self.error_model.sortedy - (x[1] * self.error_model.sortedx) - x[0]
+        ) + ((x[1] - 1.2) ** 2 ) * 1000 #1.5 will feed in and need to decide 100 (put this in phil scope)
+        return R
+
+    def calculate_gradients(self, apm):
+        x = apm.x
+        R = self.error_model.sortedy - (x[1] * self.error_model.sortedx) - x[0]
+        gradient = flex.double(
+            [-2.0 * flex.sum(R), -2.0 * flex.sum(R * self.error_model.sortedx) - 2.0 * (x[1] - 1.2) * 1000]
+        ) # see above note for numbers here
+        return gradient
+"""
