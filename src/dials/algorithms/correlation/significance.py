@@ -173,6 +173,10 @@ class ClusterSignificance:
         self.params.weighting.error_model.grouping = "grouped"
         self.params.scaling_options.full_matrix = False
 
+        if len(ids1) <= 2 or len(ids2) <= 2:
+            self.params.weighting.error_model.basic.a = 1.18953  # 1.11263
+            self.params.weighting.error_model.basic.b = 0.09955  # 0.04003
+
         scale = ScalingAlgorithm(self.params, temp_experiments, temp_reflections)
         scale.run()
 
