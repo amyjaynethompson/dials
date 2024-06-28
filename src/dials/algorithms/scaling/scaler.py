@@ -31,6 +31,7 @@ from dials.algorithms.scaling.combine_intensities import (
     SingleDatasetIntensityCombiner,
 )
 from dials.algorithms.scaling.error_model.engine import run_error_model_refinement
+from dials.algorithms.scaling.error_model.error_model import extract_error_model_groups
 from dials.algorithms.scaling.Ih_table import IhTable
 from dials.algorithms.scaling.outlier_rejection import (
     determine_Esq_outlier_index_arrays,
@@ -1474,31 +1475,9 @@ class MultiScalerBase(ScalerBase):
     @Subject.notify_event(event="performed_error_analysis")
     def perform_error_optimisation(self, update_Ih=True):
         """Perform an optimisation of the sigma values."""
-        if self.params.weighting.error_model.grouping == "combined":
-            minimisation_groups = [[i for i, _ in enumerate(self.active_scalers)]]
-        elif self.params.weighting.error_model.grouping == "individual":
-            minimisation_groups = [[i] for i, _ in enumerate(self.active_scalers)]
-        else:
-            groups = self.params.weighting.error_model.error_model_group
-            if not groups:
-                logger.info(
-                    """No error model groups defined, defaulting to combined error model optimisation"""
-                )
-                minimisation_groups = [[i for i, _ in enumerate(self.active_scalers)]]
-            else:
-                all_datasets = [i for i, _ in enumerate(self.active_scalers)]
-                # groups are defined in terms of sweeps (1,2,3,...), but here
-                # need to convert to dataset number (0, 1, 2,...)
-                explicitly_grouped = [i - 1 for j in groups for i in j]
-                if -1 in explicitly_grouped:  # sweeps provided indexed from 0
-                    explicitly_grouped = [i for j in groups for i in j]
-                    minimisation_groups = [list(g) for g in groups]
-                else:
-                    minimisation_groups = [[i - 1 for i in g] for g in groups]
-                others = set(all_datasets).difference(set(explicitly_grouped))
-                if others:
-                    minimisation_groups += [list(others)]
-
+        minimisation_groups = extract_error_model_groups(
+            self.params.weighting.error_model, len(self.active_scalers)
+        )
         for g in minimisation_groups:
             scalers = [self.active_scalers[i] for i in g]
             error_model = scalers[0]._experiment.scaling_model.error_model
@@ -1572,6 +1551,34 @@ class MultiScaler(MultiScalerBase):
         self._global_Ih_table, self._free_Ih_table = self._create_global_Ih_table(
             self.params.anomalous
         )
+        # set up any special error model options:
+        if self.params.weighting.error_model.error_model_group:
+            minimisation_groups = extract_error_model_groups(
+                self.params.weighting.error_model, self.n_initial_active_scalers
+            )
+            for g in minimisation_groups:
+                this_params = copy.deepcopy(self.params.weighting.error_model)
+                for v in self.params.weighting.error_model.error_model_group:
+                    if v.datasets == g:
+                        if v.basic.a:
+                            this_params.basic.a = v.basic.a
+                        if v.basic.b:
+                            this_params.basic.b = v.basic.b
+                        if v.error_model:
+                            this_params.error_model = v.error_model
+                        if v.basic.minimisation:
+                            this_params.basic.minimisation = v.basic.minimisation
+                for i in g:
+                    self.active_scalers[i].experiment.scaling_model.load_error_model(
+                        this_params
+                    )
+            for i, scaler in enumerate(self.active_scalers):
+                error_model = scaler._experiment.scaling_model.error_model
+                if not error_model.params.minimisation:
+                    continue  # no need to update for this subset
+                self.global_Ih_table.update_weights(error_model, dataset_id=i)
+                if self._free_Ih_table:
+                    self._free_Ih_table.update_weights(error_model, dataset_id=i)
         # now select reflections from across the datasets
         self._select_reflections_for_scaling()
         self._create_Ih_table()

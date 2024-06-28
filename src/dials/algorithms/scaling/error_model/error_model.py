@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 from math import ceil, exp, log
+from typing import List
 
 import numpy as np
 from scipy.stats import norm
@@ -73,15 +74,69 @@ phil_scope = phil.parse(
                 "grouping should be used. If grouping=grouped, each group"
                 "should be specified with the error_model_group=parameter."
         .expert_level = 2
-    error_model_group = None
-        .type = ints
+    error_model_group
         .multiple = True
+        .expert_level = 2
         .help = "Specify a subset of sweeps which should share an error model."
                 "If no groups are specified here, this is interpreted to mean"
                 "that all sweeps should share a common error model."
-
+    {
+        datasets = None
+            .type =ints(value_min=0)
+            .expert_level=2
+        error_model = *basic None
+            .type = choice
+            .help = "The error model to use."
+            .expert_level = 2
+        basic {
+            a = None
+            .type = float
+            .help = "Used this fixed value for the error model 'a' parameter"
+            .expert_level = 3
+            b = None
+            .type = float
+            .help = "Used this fixed value for the error model 'b' parameter"
+            .expert_level = 3
+            minimisation = *individual regression None
+            .type = choice
+            .help = "The algorithm to use for basic error model minimisation."
+                    "For individual, the a and b parameters are optimised"
+                    "sequentially. For regression, a linear fit is made to"
+                    "determine both parameters concurrently. If minimisation=None,"
+                    "the model parameters are fixed to their initial or given values."
+            .expert_level = 4
+        }
+    }
     """
 )
+
+
+def extract_error_model_groups(params, n_tables) -> List[List[int]]:
+    if params.grouping == "combined":
+        minimisation_groups = [list(range(n_tables))]
+    elif params.grouping == "individual":
+        minimisation_groups = [[i] for i in range(n_tables)]
+    else:
+        groups = params.error_model_group
+        if not groups:
+            logger.info(
+                """No error model groups defined, defaulting to combined error model optimisation"""
+            )
+            minimisation_groups = [list(range(n_tables))]
+        else:
+            all_datasets = list(range(n_tables))
+            # groups are defined in terms of sweeps (1,2,3,...), but here
+            # need to convert to dataset number (0, 1, 2,...)
+            explicitly_grouped = [i - 1 for j in groups for i in j.datasets]
+            if -1 in explicitly_grouped:  # sweeps provided indexed from 0
+                explicitly_grouped = [i for j in groups for i in j.datasets]
+                minimisation_groups = [list(g.datasets) for g in groups]
+            else:
+                minimisation_groups = [[i - 1 for i in g.datasets] for g in groups]
+            others = set(all_datasets).difference(set(explicitly_grouped))
+            if others:
+                minimisation_groups += [list(others)]
+    return minimisation_groups
 
 
 def calc_sigmaprime(x, Ih_table) -> np.array:
