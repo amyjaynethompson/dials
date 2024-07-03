@@ -22,11 +22,13 @@ from dials.util.version import dials_version
 
 logger = logging.getLogger("dials.algorithms.correlation.analysis")
 
+# include scope dials.algorithms.scaling.error_model.error_model.phil_scope
+# include scope dials.command_line.scale.phil_scope
+
 phil_scope = iotbx.phil.parse(
     """\
 include scope dials.algorithms.correlation.analysis.phil_scope
-include scope dials.algorithms.scaling.error_model.error_model.phil_scope
-include scope dials.command_line.scale.phil_scope
+
 
 seed = 42
   .type = int(value_min=0)
