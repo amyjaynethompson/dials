@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import logging
 
 from scipy.cluster import hierarchy
@@ -142,7 +143,7 @@ class ClusterSignificance:
             z2 = z**2
             q += z2
         p_value = chi2.sf(q, dof)
-        significance = 0.05  # 0.000001
+        significance = 0.000001
         if p_value < significance:
             significant_cluster = True
         else:
@@ -169,15 +170,44 @@ class ClusterSignificance:
 
         temp_experiments = ExperimentList(temp_experiments)
 
-        self.params.weighting.error_model.error_model_group = [idx1, idx2]
-        self.params.weighting.error_model.grouping = "grouped"
-        self.params.scaling_options.full_matrix = False
+        # vmxi 8 of each: a = 1.11263, b = 0.04003
+        # I24 with little squares: a = 1.18953, b = 0.09955
+        # vmxi chp: a= 0.84332, b = 0.08567
 
-        if len(ids1) <= 2 or len(ids2) <= 2:
-            self.params.weighting.error_model.basic.a = 1.18953  # 1.11263
-            self.params.weighting.error_model.basic.b = 0.09955  # 0.04003
+        ref_a = 1.11263
+        ref_b = 0.04003
 
-        scale = ScalingAlgorithm(self.params, temp_experiments, temp_reflections)
+        from dials.command_line.scale import phil_scope as scaling_scope
+
+        params = scaling_scope.extract()
+
+        error2 = copy.deepcopy(params.weighting.error_model.error_model_group[0])
+        params.weighting.error_model.error_model_group.append(error2)
+
+        params.weighting.error_model.error_model_group[0].datasets = idx1
+        params.weighting.error_model.error_model_group[1].datasets = idx2
+
+        if len(idx1) <= 4:
+            params.weighting.error_model.error_model_group[0].basic.a = ref_a
+            params.weighting.error_model.error_model_group[0].basic.b = ref_b
+        else:
+            params.weighting.error_model.error_model_group[0].basic.a = None
+            params.weighting.error_model.error_model_group[0].basic.b = None
+        if len(idx2) <= 4:
+            params.weighting.error_model.error_model_group[1].basic.a = ref_a
+            params.weighting.error_model.error_model_group[1].basic.b = ref_b
+        else:
+            params.weighting.error_model.error_model_group[1].basic.a = None
+            params.weighting.error_model.error_model_group[1].basic.b = None
+
+        # self.params.weighting.error_model.error_model_group.datasets = [idx1, idx2]
+        params.weighting.error_model.grouping = "grouped"
+        params.scaling_options.full_matrix = False
+
+        # params.weighting.error_model.basic.stills.min_multiplicity=2
+        # params.weighting.error_model.basic.stills.min_Isigma=1
+
+        scale = ScalingAlgorithm(params, temp_experiments, temp_reflections)
         scale.run()
 
         """
