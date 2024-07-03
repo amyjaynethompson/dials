@@ -38,6 +38,7 @@ def run_error_model_refinement(
     )
     if not model.active_parameters:
         logger.info("All error model parameters fixed, skipping refinement")
+        logger.info(model)
     else:
         logger.info("Performing a round of error model refinement.")
         refinery = error_model_refinery(
