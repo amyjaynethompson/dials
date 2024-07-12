@@ -107,6 +107,14 @@ class ClusterSignificance:
                             cluster.right.key_cluster = True
 
         for cluster in self.nice_clusters:
+            # print("Regular Cluster")
+            # print(cluster.data_ids)
+            # print("q-score")
+            # print(cluster.q)
+            # print("p-value")
+            # print(cluster.pval)
+            # print("----")
+
             if cluster.key_cluster:
                 print("Key Cluster")
                 print(cluster.data_ids)
@@ -178,12 +186,12 @@ class ClusterSignificance:
 
         # KB MODEL
         # vmxi 8 of each: a = 1.42100, b = 0.04397
-        # I24 with little squares: a = xxxxx, b = xxxxx
-        # vmxi chp: a= xxxxx, b = xxxxx
+        # I24 with little squares: a = 1.20724, b = 0.10952
+        # vmxi chp: a= 3.02531, b = 0.02097 - BUT SUPER WEIRD STUFF
         # I24 chp: a= xxxxx, b = xxxxx
 
-        ref_a = 1.42100
-        ref_b = 0.04397
+        ref_a = 1
+        ref_b = 0.0263
 
         from dials.command_line.scale import phil_scope as scaling_scope
 
@@ -197,29 +205,33 @@ class ClusterSignificance:
 
         params.overwrite_existing_models = True
         params.model = "KB"
-        # params.weighting.error_model.basic.min_Ih=100
-        # params.reflection_selection.random.min_groups=500
-        # params.reflection_selection.random.min_reflections=10000
+        params.scaling_refinery.engine = "LevMar"
 
-        if len(idx1) <= 2:
+        # params.weighting.error_model.basic.min_Ih=50
+        # params.reflection_selection.random.min_groups=200
+        # params.reflection_selection.random.min_reflections=5000
+        params.cut_data.d_min = 2.5
+
+        # if len(idx1) <= 2 or len(idx2) <= 2:
+        # params.overwrite_existing_models = True
+        # params.model = "KB"
+        # params.scaling_refinery.engine = "LevMar"
+
+        if len(idx1) <= 4:
             params.weighting.error_model.error_model_group[0].basic.a = ref_a
             params.weighting.error_model.error_model_group[0].basic.b = ref_b
         else:
             params.weighting.error_model.error_model_group[0].basic.a = None
             params.weighting.error_model.error_model_group[0].basic.b = None
-        if len(idx2) <= 2:
+        if len(idx2) <= 4:
             params.weighting.error_model.error_model_group[1].basic.a = ref_a
             params.weighting.error_model.error_model_group[1].basic.b = ref_b
         else:
             params.weighting.error_model.error_model_group[1].basic.a = None
             params.weighting.error_model.error_model_group[1].basic.b = None
 
-        # self.params.weighting.error_model.error_model_group.datasets = [idx1, idx2]
         params.weighting.error_model.grouping = "grouped"
         params.scaling_options.full_matrix = False
-
-        # params.weighting.error_model.basic.stills.min_multiplicity=2
-        # params.weighting.error_model.basic.stills.min_Isigma=1
 
         scale = ScalingAlgorithm(params, temp_experiments, temp_reflections)
         scale.run()
