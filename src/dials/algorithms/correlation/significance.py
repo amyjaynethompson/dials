@@ -191,7 +191,7 @@ class ClusterSignificance:
         # I24 chp: a= xxxxx, b = xxxxx
 
         ref_a = 1
-        ref_b = 0.0263
+        ref_b = 0
 
         from dials.command_line.scale import phil_scope as scaling_scope
 
@@ -203,27 +203,27 @@ class ClusterSignificance:
         params.weighting.error_model.error_model_group[0].datasets = idx1
         params.weighting.error_model.error_model_group[1].datasets = idx2
 
-        params.overwrite_existing_models = True
-        params.model = "KB"
-        params.scaling_refinery.engine = "LevMar"
+        # params.overwrite_existing_models = True
+        # params.model = "KB"
+        # params.scaling_refinery.engine = "LevMar"
 
         # params.weighting.error_model.basic.min_Ih=50
         # params.reflection_selection.random.min_groups=200
         # params.reflection_selection.random.min_reflections=5000
-        params.cut_data.d_min = 2.5
+        # params.cut_data.d_min = 2.5
 
         # if len(idx1) <= 2 or len(idx2) <= 2:
         # params.overwrite_existing_models = True
         # params.model = "KB"
         # params.scaling_refinery.engine = "LevMar"
 
-        if len(idx1) <= 4:
+        if len(idx1) <= 2:
             params.weighting.error_model.error_model_group[0].basic.a = ref_a
             params.weighting.error_model.error_model_group[0].basic.b = ref_b
         else:
             params.weighting.error_model.error_model_group[0].basic.a = None
             params.weighting.error_model.error_model_group[0].basic.b = None
-        if len(idx2) <= 4:
+        if len(idx2) <= 2:
             params.weighting.error_model.error_model_group[1].basic.a = ref_a
             params.weighting.error_model.error_model_group[1].basic.b = ref_b
         else:
