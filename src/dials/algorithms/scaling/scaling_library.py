@@ -173,6 +173,7 @@ def scale_against_target(
     scaler = TargetScalerFactory.create(params, experiments, reflections)
     scaler.perform_scaling()
     scaler.expand_scales_to_all_reflections(calc_cov=True)
+    scaler.prepare_reflection_tables_for_output()
     return scaler.unscaled_scalers[0].reflection_table
 
 
@@ -385,7 +386,6 @@ class MergedHalfDatasets:
 
 
 class ExtendedDatasetStatistics(iotbx.merging_statistics.dataset_statistics):
-
     """A class to extend iotbx merging statistics."""
 
     def __init__(self, *args, additional_stats=False, seed=0, **kwargs):

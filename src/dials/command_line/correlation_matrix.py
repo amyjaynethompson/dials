@@ -10,6 +10,7 @@ from jinja2 import ChoiceLoader, Environment, PackageLoader
 import iotbx.phil
 
 from dials.algorithms.correlation.analysis import CorrelationMatrix
+from dials.algorithms.correlation.significance import ClusterSignificance
 from dials.array_family import flex
 from dials.util import log, show_mail_handle_errors
 from dials.util.multi_dataset_handling import (
@@ -113,6 +114,15 @@ def run(args=None):
         sys.exit(e)
 
     matrices.calculate_matrices()
+
+    if params.significance.assess:
+        if params.significance.cluster_method == "correlation":
+            linkage = matrices.cc_linkage_matrix
+        else:
+            linkage = matrices.cos_linkage_matrix
+        ClusterSignificance(
+            matrices.unmerged_datasets, linkage, experiments, reflections, params
+        )
 
     if params.output.json:
         matrices.output_json()

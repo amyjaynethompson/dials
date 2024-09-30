@@ -56,6 +56,17 @@ dimensionality_assessment {
     .type = int
     .help = "Maximum number of dimensions to test for reasonable processing time"
 }
+significance {
+  threshold = 0.05
+    .type = float
+    .help = "Required p-value for a dendrogram node to represent a significant difference"
+  assess = False
+    .type = bool
+    .help = "Set to true to perform significance assessment"
+  cluster_method = *correlation cos_angle
+    .type = choice
+    .help = "Metric on which to perform significance testing."
+}
 """,
     process_includes=True,
 )
