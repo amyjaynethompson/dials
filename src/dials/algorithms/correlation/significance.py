@@ -5,13 +5,12 @@ import logging
 from scipy.cluster import hierarchy
 from scipy.stats.distributions import chi2
 
+from dxtbx.model import ExperimentList
+
 from dials.algorithms.correlation.plots import linkage_matrix_to_dict
+from dials.algorithms.scaling.algorithm import ScalingAlgorithm
 
-# from dials.algorithms.scaling.algorithm import ScalingAlgorithm
-from dials.util.filter_reflections import filtered_arrays_from_experiments_reflections
-
-# from dxtbx.model import ExperimentList
-
+# from dials.util.filter_reflections import filtered_arrays_from_experiments_reflections
 
 logger = logging.getLogger("dials.algorithms.correlation.analysis")
 
@@ -144,7 +143,6 @@ class ClusterSignificance:
             z2 = z**2
             q += z2
         p_value = chi2.sf(q, dof)
-        # significance = 0.05  # 0.000001
         if p_value < self.params.significance.threshold:
             significant_cluster = True
         else:
@@ -153,70 +151,155 @@ class ClusterSignificance:
 
     def scale_and_merge_clusters(self, ids1, ids2):
 
-        elist1 = []
-        elist2 = []
-        r1 = []
-        r2 = []
+        from dials.algorithms.scaling.scaling_library import (
+            scale_against_target,
+            scaled_data_as_miller_array,
+        )
+        from dials.array_family import flex
+        from dials.command_line.scale import phil_scope as scaling_scope
+
+        params = scaling_scope.extract()
+
+        # TESTING
+
+        # params.weighting.error_model.basic.minimisation=None
+
+        # for initial scale
+        temp_experiments_1 = []
+        temp_reflections_1 = []
+
+        temp_experiments_2 = []
+        temp_reflections_2 = []
+
         idx1 = []
         idx2 = []
+
         for idx, i in enumerate(ids1):
-            elist1.append(self.experiments[i])
-            r1.append(self.reflections[i])
+            temp_experiments_1.append(self.experiments[i])
+            temp_reflections_1.append(self.reflections[i])
             idx1.append(idx)
 
         for idx, i in enumerate(ids2):
-            elist2.append(self.experiments[i])
-            r2.append(self.reflections[i])
+            temp_experiments_2.append(self.experiments[i])
+            temp_reflections_2.append(self.reflections[i])
             idx2.append(idx)
 
         idx2 = [i + len(idx1) for i in idx2]
 
-        """
-        from dials.algorithms.scaling.scaling_library import (
-            scaled_data_as_miller_array,
-            scale_against_target,
+        e1 = ExperimentList(temp_experiments_1)
+        e2 = ExperimentList(temp_experiments_2)
+
+        individual_scale_1 = ScalingAlgorithm(params, e1, temp_reflections_1)
+        individual_scale_1.run()
+
+        individual_scale_2 = ScalingAlgorithm(params, e2, temp_reflections_2)
+        individual_scale_2.run()
+
+        # Make happy for next step
+        r1 = flex.reflection_table()
+        r2 = flex.reflection_table()
+
+        for i in temp_reflections_1:
+            r1.extend(i)
+        for i in temp_reflections_2:
+            r2.extend(i)
+
+        # SCALE INDIVIDUALLY FIRST THEN DO THE THINGS
+
+        a1 = scaled_data_as_miller_array([r1], e1)
+        a2 = scaled_data_as_miller_array([r2], e2)
+        a1 = a1.merge_equivalents().array()
+        a2 = a2.merge_equivalents().array()
+
+        # Do it this way so that the intensities have the proper error model adjustment
+        r1["intensity.sum.value"] = r1["intensity.scale.value"]
+        r1["intensity.sum.variance"] = r1["intensity.scale.variance"]
+
+        r1["intensity.sum.value"] /= r1["inverse_scale_factor"]
+        r1["intensity.sum.variance"] /= r1["inverse_scale_factor"] ** 2
+
+        r2["intensity.sum.value"] = r2["intensity.scale.value"]
+        r2["intensity.sum.variance"] = r2["intensity.scale.variance"]
+
+        r2["intensity.sum.value"] /= r2["inverse_scale_factor"]
+        r2["intensity.sum.variance"] /= r2["inverse_scale_factor"] ** 2
+
+        # delete things so that the 'sum' intensity won't be corrected any further
+        for k in [
+            "lp",
+            "qe",
+            "dqe",
+            "partiality",
+            "intensity.prf.value",
+            "intensity.prf.variance",
+            "intensity.scale.value",
+            "intensity.scale.variance",
+            "inverse_scale_factor",
+        ]:
+            if k in r1:
+                del r1[k]
+            if k in r2:
+                del r2[k]
+
+        # reset some ids
+        r1["id"] = flex.int(r1.size(), 0)
+        r2["id"] = flex.int(r2.size(), 1)
+        for k in list(r1.experiment_identifiers().keys()):
+            del r1.experiment_identifiers()[k]
+        for k in list(r2.experiment_identifiers().keys()):
+            del r2.experiment_identifiers()[k]
+        r1.experiment_identifiers()[0] = "0"
+        r2.experiment_identifiers()[1] = "1"
+
+        # remove the existing scaling models
+
+        for e in e1:
+            e.scaling_model = None
+        for e in e2:
+            e.scaling_model = None
+
+        e1[0].identifier = "0"
+        e2[0].identifier = "1"
+
+        elist1 = ExperimentList([e1[0]])
+        elist2 = ExperimentList([e2[0]])
+        params.model = "KB"
+        params.weighting.error_model.error_model = None
+
+        result = scale_against_target(r1, elist1, r2, elist2, params)
+
+        logger.info("\nFinal scaling model")
+        logger.info(
+            f"Scale factor: {elist1.scaling_models()[0].to_dict()['scale']['parameters'][0]}"
         )
-        """
-
-        # params.model = "KB"
-        # result = scale_against_target(r1, elist1, r2, elist2, params)
-
-        # print(result)
-        exit()
-
-        datasets = filtered_arrays_from_experiments_reflections(
-            elist1,
-            elist2,
-            outlier_rejection_after_filter=False,
-            partiality_threshold=self.params.partiality_threshold,
+        logger.info(
+            f"B factor: {elist1.scaling_models()[0].to_dict()['decay']['parameters'][0]}"
         )
 
-        array_1 = None
-        array_2 = None
+        # now calculate the significance
 
-        for i in idx1:
-            if not array_1:
-                array_1 = datasets[i].deep_copy()
-            else:
-                data = datasets[i].customized_copy(
-                    crystal_symmetry=array_1.crystal_symmetry()
-                )
-                array_1 = array_1.concatenate(data)
+        a3 = scaled_data_as_miller_array([result], elist1)
+        a3 = a3.merge_equivalents().array()
 
-        merged_array_1 = self._merge_intensities([array_1])
+        logger.info("Clusters analysed:")
+        logger.info(ids1)
+        logger.info(ids2)
 
-        for i in idx2:
-            if not array_2:
-                array_2 = datasets[i].deep_copy()
-            else:
-                data = datasets[i].customized_copy(
-                    crystal_symmetry=array_2.crystal_symmetry()
-                )
-                array_2 = array_2.concatenate(data)
+        logger.info("\nSignificance of difference of input datasets")
+        res = self.calculate_significance(a1, a2)
+        logger.info(
+            f"significant_cluster: {res[0]}\np_value: {res[1]}\n q:{res[2]}\n dof:{res[3]}"
+        )
 
-        merged_array_2 = self._merge_intensities([array_2])
+        logger.info(
+            "\nSignificance of difference of input datasets after coarse scaling"
+        )
+        res = self.calculate_significance(a3, a2)
+        logger.info(
+            f"significant_cluster: {res[0]}\np_value: {res[1]}\n q:{res[2]}\n dof:{res[3]}"
+        )
 
-        return merged_array_1[0], merged_array_2[0]
+        return a3, a2
 
     def _merge_intensities(self, datasets: list) -> list:
         """
